@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Manually updates Discord and re-injects BetterDiscord in one step, then re-locks the updater.
 
@@ -123,7 +123,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     Write-Host "Closing $processName (and any related processes) if running..."
     $clean = Stop-DiscordFamily -ProcessName $processName -InstallDir $installDir
     if (-not $clean) {
-        Write-Warning "Some $processName-related processes wouldn't close. The install may fail with an access-denied error — if it does, close them manually in Task Manager (or reboot) and re-run this script."
+        Write-Warning "Some $processName-related processes wouldn't close. The install may fail with an access-denied error -- if it does, close them manually in Task Manager (or reboot) and re-run this script."
     }
 
     Write-Host "Running installer (attempt $attempt of $maxAttempts)..."

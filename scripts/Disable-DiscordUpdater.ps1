@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Disables Discord's built-in auto-updater so it stops silently overwriting BetterDiscord.
 

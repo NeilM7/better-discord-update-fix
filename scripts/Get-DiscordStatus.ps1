@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Reports whether Discord's auto-updater is currently locked or unlocked, for every channel
     that's actually installed.

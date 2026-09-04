@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Re-enables Discord's built-in auto-updater (reverses Disable-DiscordUpdater.ps1).
 
