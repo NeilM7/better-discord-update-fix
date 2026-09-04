@@ -127,19 +127,49 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     }
 
     Write-Host "Running installer (attempt $attempt of $maxAttempts)..."
-    $proc = Start-Process -FilePath $installerPath -PassThru -Wait
-    Start-Sleep -Seconds 3
+    # Don't use -Wait: Discord's installer (Squirrel) reliably finishes the install and relaunches
+    # Discord itself, but the installer process doesn't always exit afterwards -- -Wait would then
+    # block forever even though there's nothing left to do. Instead, poll: the install is done as
+    # soon as either the installer process exits on its own, or Discord itself comes back up.
+    $proc = Start-Process -FilePath $installerPath -PassThru
+    $timeoutSeconds = 180
+    $waited = 0
+    $installerExitCode = $null
 
-    # The installer launches Discord itself once done; close it again before re-patching.
+    while ($waited -lt $timeoutSeconds) {
+        Start-Sleep -Seconds 3
+        $waited += 3
+
+        if ($proc.HasExited) {
+            $installerExitCode = $proc.ExitCode
+            break
+        }
+        if (Get-Process -Name $processName -ErrorAction SilentlyContinue) {
+            Write-Host "$processName has relaunched -- the update finished."
+            $installerExitCode = 0
+            break
+        }
+    }
+
+    if ($null -eq $installerExitCode) {
+        Write-Warning "The installer didn't finish (or relaunch $processName) within $timeoutSeconds seconds. Treating this attempt as failed."
+    }
+    elseif (-not $proc.HasExited) {
+        # Discord came back up but the installer itself is still sitting there for some reason --
+        # it has nothing left to do, so don't leave it running in the background.
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    # Close Discord again (whether the installer relaunched it or not) before re-patching.
     Stop-DiscordFamily -ProcessName $processName -InstallDir $installDir | Out-Null
 
-    if ((Test-UpdateSucceeded -InstallDir $installDir) -and $proc.ExitCode -eq 0) {
+    if ((Test-UpdateSucceeded -InstallDir $installDir) -and $installerExitCode -eq 0) {
         $succeeded = $true
         break
     }
 
     if ($attempt -lt $maxAttempts) {
-        Write-Warning "The install didn't look clean (installer exit code $($proc.ExitCode)). This is usually a transient file lock. Waiting a few seconds and trying once more..."
+        Write-Warning "The install didn't look clean (installer exit code $installerExitCode). This is usually a transient file lock. Waiting a few seconds and trying once more..."
         Start-Sleep -Seconds 5
     }
 }
