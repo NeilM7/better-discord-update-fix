@@ -37,8 +37,19 @@ foreach ($c in $channels) {
 
     $found = $true
 
-    $appDir = Get-ChildItem -Path $base -Filter 'app-*' -Directory -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1
+    # Only trust a folder that actually has Discord's core runtime files -- Squirrel (Discord's
+    # updater) can leave old, incomplete app-* folders behind after a failed cleanup, and sorting
+    # folder names as plain text (e.g. "app-1.0.9256" vs "app-1.0.9059") can pick a stale one over
+    # the real current version, since 9256 sorts after 9059 as text despite Discord considering
+    # 9059 current. Compare the version numbers themselves instead.
+    $candidates = Get-ChildItem -Path $base -Filter 'app-*' -Directory -ErrorAction SilentlyContinue
+    $validDirs = $candidates | Where-Object {
+        (Test-Path (Join-Path $_.FullName 'v8_context_snapshot.bin')) -and
+        (Test-Path (Join-Path $_.FullName 'snapshot_blob.bin'))
+    }
+    $appDir = ($(if ($validDirs) { $validDirs } else { $candidates })) |
+        Sort-Object { try { [version]($_.Name -replace '^app-', '') } catch { [version]'0.0' } } -Descending |
+        Select-Object -First 1
     $bdInjected = $false
     if ($appDir) {
         $bdAsar = Get-ChildItem -Path (Join-Path $appDir.FullName 'resources') -Filter 'betterdiscord*.asar' -ErrorAction SilentlyContinue

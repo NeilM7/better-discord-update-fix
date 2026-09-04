@@ -46,7 +46,7 @@ The launcher shows you the live lock status for every installed Discord channel,
 |---|---|
 | **1. Lock Discord** | Stops Discord from silently auto-updating, so BetterDiscord stays intact. |
 | **2. Unlock Discord** | Restores normal auto-update behavior. |
-| **3. Install/Update Discord + BetterDiscord** | Gets you fully up to date: downloads and installs the latest Discord (whether it's already installed or not), re-locks the updater, and installs/re-injects BetterDiscord (downloading its own files too if they're not on the machine yet, and installing the [BetterDiscord CLI](https://github.com/BetterDiscord/cli) for you if that's missing). Cleans up its own temp files afterward. Safe to run repeatedly — it always clears out any existing BetterDiscord injection first so a previous partial/broken state can't linger. |
+| **3. Install/Update Discord + BetterDiscord** | Gets you fully up to date: downloads and installs the latest Discord (whether it's already installed or not), re-locks the updater, and installs/re-injects BetterDiscord (downloading its own files too if they're not on the machine yet, and installing the [BetterDiscord CLI](https://github.com/BetterDiscord/cli) for you if that's missing). Verifies the result by actually test-launching Discord rather than trusting a reported exit code, and retries automatically if that trial launch hits a crash. Cleans up its own temp files afterward. Safe to run repeatedly — it always clears out any existing BetterDiscord injection first so a previous partial/broken state can't linger. Doesn't open Discord for you when it's done — launch it yourself whenever you're ready. |
 | **4. Choose a different channel** | Switch between Stable, PTB, and Canary. Stable is used by default. |
 
 ## How it works
@@ -68,10 +68,13 @@ Everything the `.bat` does is plain PowerShell in `scripts/`, callable on its ow
 | `scripts/Update-Discord.ps1` | Installs/updates Discord and installs/re-injects BetterDiscord in one step, from any starting state. |
 | `scripts/Get-DiscordStatus.ps1` | Prints the current lock status for every installed channel. |
 
-All accept `-Channel Stable|PTB|Canary` (default `Stable`):
+All accept `-Channel Stable|PTB|Canary` (default `Stable`). `Update-Discord.ps1` also accepts
+`-Relaunch` to open Discord automatically once everything is installed and verified (off by
+default -- it just leaves Discord installed and locked, ready for you to open whenever you want):
 
 ```powershell
 .\scripts\Disable-DiscordUpdater.ps1 -Channel Canary
+.\scripts\Update-Discord.ps1 -Channel PTB -Relaunch
 ```
 
 Quit Discord fully (system tray, not just the window) before running the lock/unlock scripts.
@@ -102,17 +105,36 @@ Quit Discord fully (system tray, not just the window) before running the lock/un
   delete it.
 - **SmartScreen blocks the `.bat`** — click **More info** → **Run anyway**. The scripts are plain
   text; open them in Notepad if you want to see exactly what they do before running.
-- **"Cannot find module '../betterdiscord.app.asar'" when Discord starts** — BetterDiscord was
-  left in a half-injected state (Discord's entry point was patched to load BetterDiscord's payload
-  file, but that file itself is missing or stale, usually because a previous update/injection got
-  interrupted). Run option 3 again — it always clears out any existing injection before
-  reinstalling, so this resolves itself. If you're running the scripts directly instead of the
-  `.bat`, the equivalent manual fix is `bdcli uninstall --channel stable` followed by
-  `bdcli install --channel stable` (swap `stable` for `ptb`/`canary` as needed).
+- **"Cannot find module '../betterdiscord.app.asar'" when Discord starts** — this is a
+  well-documented BetterDiscord race, not a broken install: bdcli relaunches Discord immediately
+  after writing the freshly injected files, and if Windows is still holding a brief lock on those
+  files at that exact moment (antivirus/reputation scanning, the same reason a fresh download
+  sometimes needs you to click "Keep" before it's usable), Discord's main process can hit this and
+  get stuck behind a small error dialog — it does **not** crash and exit, it just hangs there until
+  you click OK. `Update-Discord.ps1` now actually test-launches Discord after every injection and
+  checks for that exact dialog (not just whether the process is still running), automatically
+  retrying the launch — and if needed, the whole uninstall/reinstall cycle — until it verifies a
+  real, clean launch. If you're running the scripts directly and still hit this: just close Discord
+  and reopen it — the lock clears on its own within a few seconds.
+- **Discord crashes instantly with a "V8 startup snapshot" / native crash, BetterDiscord seems
+  injected but Discord still won't start, or it downloads/installs updates again right after this
+  tool says it's done** — Discord's own updater (Squirrel) can leave old, incomplete
+  `app-<version>` folders behind under `%LOCALAPPDATA%\Discord` after a failed cleanup, and on a
+  brand new install (or a big version jump) Discord's installer only bootstraps the app — Discord's
+  *own* updater then downloads a chain of patches the first time it actually launches (the
+  "Downloading update 1 of 7..." screen). Locking the updater or injecting BetterDiscord before
+  that chain finishes leaves BetterDiscord with an incomplete build to attach to. `Update-Discord.ps1`
+  now waits for that chain to actually settle before touching anything, only considers an
+  `app-*` folder valid if it has Discord's core runtime files (comparing version numbers correctly,
+  not sorting folder names as text), and cleans up stale folders after every run. If you still have
+  a leftover broken folder from before upgrading this tool, just run option 3 once more.
 
 ## Notes
 
 - Tested against the Stable channel; PTB/Canary support is included but less exercised.
+- The first time you open Discord after option 3, it may briefly show its own "Downloading..."
+  screen once more -- that's Discord fetching normal in-app resources (dictionaries, emoji, etc.),
+  not the app-version updater running again. Your lock is unaffected by it.
 - Not affiliated with Discord Inc. or the BetterDiscord project.
 
 ## License

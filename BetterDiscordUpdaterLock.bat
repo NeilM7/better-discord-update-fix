@@ -72,7 +72,9 @@ if not defined CHANNEL set "CHANNEL=Stable"
 echo.
 echo   Installing/updating Discord (%CHANNEL%) and BetterDiscord...
 echo   This works whether either one is already installed or not, and downloads
-echo   whatever's needed. May take a few minutes on a fresh machine.
+echo   whatever's needed. May take a few minutes on a fresh machine. Discord won't
+echo   open automatically when it's done -- just start it yourself whenever you're
+echo   ready.
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\Update-Discord.ps1" -Channel %CHANNEL%
 goto pause_menu
