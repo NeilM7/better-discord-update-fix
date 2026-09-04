@@ -87,6 +87,15 @@ Quit Discord fully (system tray, not just the window) before running the lock/un
   and choose Quit, then try again.
 - **"bdcli still not found on PATH"** — install it manually with
   `winget install betterdiscord.cli` or `npm install -g @betterdiscord/cli`, then re-run.
+- **Option 3 fails with "Access to the path ... is denied" / a shortcut says "Discord.exe has
+  been changed or moved"** — a leftover Discord-related process (often the crash handler, or a
+  helper process) was still holding a file open when the installer tried to replace it, so the
+  install got interrupted partway. This is a well-known Squirrel/Discord quirk and not something
+  BetterDiscord Updater Lock caused. `Update-Discord.ps1` already retries once automatically; if
+  it still fails, reboot (this always clears stuck file handles) or end every
+  Discord/DiscordPTB/DiscordCanary process in Task Manager, then run option 3 again. The broken
+  shortcut fixes itself once the update finishes cleanly — you can click "No" if Windows asks to
+  delete it.
 - **SmartScreen blocks the `.bat`** — click **More info** → **Run anyway**. The scripts are plain
   text; open them in Notepad if you want to see exactly what they do before running.
 

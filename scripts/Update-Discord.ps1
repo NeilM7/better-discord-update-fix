@@ -13,6 +13,12 @@
       4. Uses the official BetterDiscord CLI (bdcli) to re-inject BetterDiscord into the new build.
       5. Relaunches Discord.
 
+    The Discord installer (Squirrel) sometimes fails with "Access to the path ... is denied" if
+    any Discord-related process (including its crash handler, or a helper process) still holds a
+    file open. This script kills the whole Discord process family before *and* after the
+    installer runs, and automatically retries the install once if it looks like it didn't finish
+    cleanly.
+
     Requires the BetterDiscord CLI (bdcli). Install it with:
         winget install betterdiscord.cli
     or
@@ -49,6 +55,43 @@ $processName = switch ($Channel) {
     'PTB'    { 'DiscordPTB' }
     'Canary' { 'DiscordCanary' }
 }
+$installDir = Join-Path $env:LOCALAPPDATA $processName
+
+function Stop-DiscordFamily {
+    <#
+        Kills every process that's part of this Discord install: the main app, its GPU/renderer/
+        utility subprocesses (they all share the same process name on Windows), the crash handler,
+        and any stray Update.exe. Repeats a few times with short waits, because a process that was
+        just asked to exit can take a moment to actually release its file handles.
+    #>
+    param([string]$ProcessName, [string]$InstallDir)
+
+    for ($i = 0; $i -lt 5; $i++) {
+        $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessName -eq $ProcessName -or
+            $_.ProcessName -like "$ProcessName*CrashHandler*" -or
+            $_.ProcessName -eq 'Update' -or
+            ($InstallDir -and $_.Path -and $_.Path.StartsWith($InstallDir, [System.StringComparison]::OrdinalIgnoreCase))
+        }
+        if (-not $procs) { return $true }
+        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+
+    # One last check so the caller knows if something is still holding on.
+    $stillRunning = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -eq $ProcessName -or
+        ($InstallDir -and $_.Path -and $_.Path.StartsWith($InstallDir, [System.StringComparison]::OrdinalIgnoreCase))
+    }
+    return (-not $stillRunning)
+}
+
+function Test-UpdateSucceeded {
+    param([string]$InstallDir)
+    $appDir = Get-ChildItem -Path $InstallDir -Filter "app-*" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    return [bool]$appDir
+}
 
 if (-not (Get-Command bdcli -ErrorAction SilentlyContinue)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -63,10 +106,6 @@ if (-not (Get-Command bdcli -ErrorAction SilentlyContinue)) {
     }
 }
 
-Write-Host "Closing $processName if running..."
-Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
-
 Write-Host "Downloading latest Discord installer ($Channel)..."
 $installerPath = Join-Path $env:TEMP "DiscordSetup-$Channel.exe"
 try {
@@ -77,13 +116,52 @@ catch {
     exit 1
 }
 
-Write-Host "Running installer..."
-Start-Process -FilePath $installerPath -Wait
+$maxAttempts = 2
+$succeeded = $false
 
-# The installer launches Discord itself once done; close it again before re-patching.
-Start-Sleep -Seconds 5
-Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
+for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    Write-Host "Closing $processName (and any related processes) if running..."
+    $clean = Stop-DiscordFamily -ProcessName $processName -InstallDir $installDir
+    if (-not $clean) {
+        Write-Warning "Some $processName-related processes wouldn't close. The install may fail with an access-denied error — if it does, close them manually in Task Manager (or reboot) and re-run this script."
+    }
+
+    Write-Host "Running installer (attempt $attempt of $maxAttempts)..."
+    $proc = Start-Process -FilePath $installerPath -PassThru -Wait
+    Start-Sleep -Seconds 3
+
+    # The installer launches Discord itself once done; close it again before re-patching.
+    Stop-DiscordFamily -ProcessName $processName -InstallDir $installDir | Out-Null
+
+    if ((Test-UpdateSucceeded -InstallDir $installDir) -and $proc.ExitCode -eq 0) {
+        $succeeded = $true
+        break
+    }
+
+    if ($attempt -lt $maxAttempts) {
+        Write-Warning "The install didn't look clean (installer exit code $($proc.ExitCode)). This is usually a transient file lock. Waiting a few seconds and trying once more..."
+        Start-Sleep -Seconds 5
+    }
+}
+
+if (-not $succeeded) {
+    Write-Error @"
+The Discord installer did not complete successfully after $maxAttempts attempt(s).
+This is almost always a file that's still locked by another process (a lingering Discord
+process, or antivirus briefly scanning the new files).
+
+Try this:
+  1. Reboot (this reliably releases any stuck file handles), or manually end every
+     Discord/DiscordPTB/DiscordCanary process in Task Manager.
+  2. Re-run this script (or option 3 in BetterDiscordUpdaterLock.bat).
+
+If a desktop/taskbar shortcut now shows "this shortcut refers to Discord.exe which has been
+changed or moved", that's a side effect of the interrupted install, not a separate problem --
+it'll resolve itself once the update finishes cleanly. You can safely click "No" to keep it.
+"@
+    Remove-Item $installerPath -ErrorAction SilentlyContinue
+    exit 1
+}
 
 Write-Host "Re-locking the updater..."
 & (Join-Path $scriptDir 'Disable-DiscordUpdater.ps1') -Channel $Channel
@@ -97,7 +175,6 @@ if ($LASTEXITCODE -ne 0) {
 Remove-Item $installerPath -ErrorAction SilentlyContinue
 
 if (-not $NoRelaunch) {
-    $installDir = Join-Path $env:LOCALAPPDATA $(if ($Channel -eq 'Stable') { 'Discord' } else { "Discord$Channel" })
     $appDir = Get-ChildItem -Path $installDir -Filter "app-*" -Directory -ErrorAction SilentlyContinue |
         Sort-Object Name -Descending | Select-Object -First 1
     if ($appDir) {
