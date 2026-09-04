@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
-    Reports whether Discord's auto-updater is currently locked or unlocked, for every channel
-    that's actually installed.
+    Reports whether Discord's auto-updater is locked, and whether BetterDiscord is actually
+    injected, for every channel that's installed.
 
 .DESCRIPTION
     Used by BetterDiscordUpdaterLock.bat to show a live status line in the menu so it's always
@@ -26,17 +26,38 @@ foreach ($c in $channels) {
     $updater = Join-Path $base 'Update.exe'
     $disabled = Join-Path $base 'Update.exe.disabled'
 
+    $lockState = $null
     if (Test-Path $disabled) {
-        $found = $true
-        Write-Host "  $($c.Name): " -NoNewline
-        Write-Host "LOCKED" -ForegroundColor Green -NoNewline
-        Write-Host " (BetterDiscord is safe from auto-update wipes)"
+        $lockState = 'locked'
     }
     elseif (Test-Path $updater) {
-        $found = $true
-        Write-Host "  $($c.Name): " -NoNewline
+        $lockState = 'unlocked'
+    }
+    if (-not $lockState) { continue }
+
+    $found = $true
+
+    $appDir = Get-ChildItem -Path $base -Filter 'app-*' -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    $bdInjected = $false
+    if ($appDir) {
+        $bdAsar = Get-ChildItem -Path (Join-Path $appDir.FullName 'resources') -Filter 'betterdiscord*.asar' -ErrorAction SilentlyContinue
+        $bdInjected = [bool]$bdAsar
+    }
+
+    Write-Host "  $($c.Name): " -NoNewline
+    if ($lockState -eq 'locked') {
+        Write-Host "LOCKED" -ForegroundColor Green -NoNewline
+    }
+    else {
         Write-Host "UNLOCKED" -ForegroundColor Yellow -NoNewline
-        Write-Host " (normal auto-update, BetterDiscord can be wiped anytime)"
+    }
+    Write-Host " | BetterDiscord: " -NoNewline
+    if ($bdInjected) {
+        Write-Host "injected" -ForegroundColor Green
+    }
+    else {
+        Write-Host "NOT injected (run option 3)" -ForegroundColor Yellow
     }
 }
 

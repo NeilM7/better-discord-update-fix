@@ -1,17 +1,36 @@
 ﻿<#
 .SYNOPSIS
-    Manually updates Discord and re-injects BetterDiscord in one step, then re-locks the updater.
+    Installs or updates Discord and (re)injects BetterDiscord in one step, then re-locks the
+    updater. Works whether Discord and/or BetterDiscord are already installed, already running,
+    partially/incorrectly injected, or not present on this machine at all.
 
 .DESCRIPTION
     With Discord's auto-updater disabled (see Disable-DiscordUpdater.ps1), Discord will never
-    update itself in the background. Run this script whenever you actually want to move to a
-    newer Discord build:
+    update itself in the background. Run this script whenever you want to move to a newer Discord
+    build -- or just to get Discord + BetterDiscord onto a brand new machine in one step:
 
-      1. Downloads and runs the latest official Discord installer for the chosen channel.
-      2. Waits for it to finish and closes Discord.
-      3. Re-disables the updater it just reinstated (the installer restores Update.exe).
-      4. Uses the official BetterDiscord CLI (bdcli) to re-inject BetterDiscord into the new build.
-      5. Relaunches Discord.
+      1. Closes Discord (and every related process) if it's running.
+      2. Cleanly uninjects any existing BetterDiscord patch for this channel via `bdcli uninstall`.
+         This matters more than it sounds: BetterDiscord patches Discord's entry point to require
+         a sibling `betterdiscord.app.asar` file, and if that pairing ever gets out of sync (e.g. a
+         previous run was interrupted, or Discord's own auto-updater slipped in before this tool
+         got a chance to lock it) Discord fails to start at all with
+         "Cannot find module '../betterdiscord.app.asar'". Uninstalling first guarantees a clean
+         slate before every reinstall, so this can't happen. Safe to run even if nothing is
+         currently installed -- bdcli just reports there was nothing to remove.
+      3. Downloads and runs the latest official Discord installer for the chosen channel. This
+         works identically whether Discord is already installed (updates it) or not installed at
+         all yet (installs it fresh) -- either way you end up on the latest build.
+      4. Waits for the install to finish and closes Discord again.
+      5. Re-disables the updater the installer just reinstated (the permanent BD-safe lock).
+      6. Uses the official BetterDiscord CLI (bdcli) to inject BetterDiscord into the new build.
+         bdcli downloads BetterDiscord's own core files itself if they aren't already on the
+         machine, so this works for a completely fresh install too, not just re-injection.
+      7. Verifies the injection actually took (the BD asar file exists next to Discord's patched
+         entry point), not just that bdcli reported success.
+      8. Cleans up every temporary file this script created (the downloaded installer, and any
+         leftover Squirrel extraction folder).
+      9. Relaunches Discord.
 
     The Discord installer (Squirrel) sometimes fails with "Access to the path ... is denied" if
     any Discord-related process (including its crash handler, or a helper process) still holds a
@@ -19,14 +38,15 @@
     installer runs, and automatically retries the install once if it looks like it didn't finish
     cleanly.
 
-    Requires the BetterDiscord CLI (bdcli). Install it with:
+    Requires the BetterDiscord CLI (bdcli). This script installs it for you via winget if it's
+    missing; it can also be installed manually with:
         winget install betterdiscord.cli
     or
         npm install -g @betterdiscord/cli
     https://github.com/BetterDiscord/cli
 
 .PARAMETER Channel
-    Which Discord channel to update. Default is Stable.
+    Which Discord channel to install/update. Default is Stable.
 
 .PARAMETER NoRelaunch
     Skip relaunching Discord after the update.
@@ -93,6 +113,26 @@ function Test-UpdateSucceeded {
     return [bool]$appDir
 }
 
+function Get-LatestAppDir {
+    param([string]$InstallDir)
+    return Get-ChildItem -Path $InstallDir -Filter "app-*" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+}
+
+function Test-BetterDiscordInjected {
+    <#
+        Confirms BetterDiscord is actually wired up in the current app-* folder, not just that
+        bdcli exited 0. BetterDiscord injects by making Discord's entry point require a sibling
+        betterdiscord*.asar payload; if that payload is missing while the patched entry point still
+        references it, Discord won't start ("Cannot find module '../betterdiscord.app.asar'").
+    #>
+    param([string]$InstallDir)
+    $appDir = Get-LatestAppDir -InstallDir $InstallDir
+    if (-not $appDir) { return $false }
+    $asar = Get-ChildItem -Path (Join-Path $appDir.FullName 'resources') -Filter 'betterdiscord*.asar' -ErrorAction SilentlyContinue
+    return [bool]$asar
+}
+
 if (-not (Get-Command bdcli -ErrorAction SilentlyContinue)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Host "bdcli not found. Installing it via winget..."
@@ -104,6 +144,23 @@ if (-not (Get-Command bdcli -ErrorAction SilentlyContinue)) {
         Write-Error "bdcli still not found on PATH. Install it manually: winget install betterdiscord.cli (or) npm install -g @betterdiscord/cli, then re-run this script."
         exit 1
     }
+}
+
+$bdcliChannel = $Channel.ToLower()
+
+Write-Host "Closing $processName (and any related processes) if running..."
+Stop-DiscordFamily -ProcessName $processName -InstallDir $installDir | Out-Null
+
+Write-Host "Clearing any existing BetterDiscord injection for a clean reinstall..."
+# Do this *before* touching Discord at all, every time -- not just when something looks broken.
+# BetterDiscord injects by making Discord's entry point require a sibling betterdiscord*.asar
+# file; if a previous run got interrupted (or Discord's own updater slipped in first), that
+# pairing can end up mismatched and Discord refuses to start at all. Uninstalling first guarantees
+# there's nothing stale left before the fresh install + reinject below. Perfectly safe to run when
+# nothing is installed yet -- bdcli just reports there was nothing to remove.
+bdcli uninstall --channel $bdcliChannel *>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  (nothing to clear -- BetterDiscord wasn't injected here yet, which is fine)"
 }
 
 Write-Host "Downloading latest Discord installer ($Channel)..."
@@ -196,13 +253,30 @@ it'll resolve itself once the update finishes cleanly. You can safely click "No"
 Write-Host "Re-locking the updater..."
 & (Join-Path $scriptDir 'Disable-DiscordUpdater.ps1') -Channel $Channel
 
-Write-Host "Re-injecting BetterDiscord..."
-bdcli install --channel $($Channel.ToLower())
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "bdcli reported an error re-injecting BetterDiscord (exit code $LASTEXITCODE). Discord has still been updated and re-locked; you may need to run 'bdcli install' manually."
+Write-Host "Installing/re-injecting BetterDiscord (downloads BetterDiscord's own files too if they aren't on this machine yet)..."
+bdcli install --channel $bdcliChannel
+$bdcliExitCode = $LASTEXITCODE
+
+if ($bdcliExitCode -ne 0) {
+    Write-Warning "bdcli reported an error (exit code $bdcliExitCode) injecting BetterDiscord. Discord has still been updated and re-locked; you may need to run 'bdcli install --channel $bdcliChannel' manually."
+}
+elseif (-not (Test-BetterDiscordInjected -InstallDir $installDir)) {
+    Write-Warning @"
+bdcli reported success, but BetterDiscord's payload file couldn't be found next to Discord's
+patched entry point afterwards -- Discord may fail to start with a "Cannot find module" error.
+Try running 'bdcli uninstall --channel $bdcliChannel' followed by 'bdcli install --channel $bdcliChannel' manually.
+"@
+}
+else {
+    Write-Host "BetterDiscord injection verified." -ForegroundColor Green
 }
 
+Write-Host "Cleaning up temporary files..."
 Remove-Item $installerPath -ErrorAction SilentlyContinue
+# Squirrel (Discord's installer/updater) extracts to a scratch folder here and doesn't always
+# clean it up itself.
+Get-ChildItem -Path $env:LOCALAPPDATA -Filter 'SquirrelTemp*' -Directory -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not $NoRelaunch) {
     $appDir = Get-ChildItem -Path $installDir -Filter "app-*" -Directory -ErrorAction SilentlyContinue |

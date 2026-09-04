@@ -8,6 +8,10 @@ every time it updates itself in the background, kicking you back to stock Discor
 warning. This tool stops that from happening — with a double-click, no PowerShell or admin
 knowledge required.
 
+It also doubles as a one-click installer: option 3 gets you Discord *and* BetterDiscord from a
+completely clean machine, and works just as well to fix a broken/partial BetterDiscord install as
+it does for routine updates.
+
 ## Contents
 
 - [Quick start](#quick-start-recommended)
@@ -42,7 +46,7 @@ The launcher shows you the live lock status for every installed Discord channel,
 |---|---|
 | **1. Lock Discord** | Stops Discord from silently auto-updating, so BetterDiscord stays intact. |
 | **2. Unlock Discord** | Restores normal auto-update behavior. |
-| **3. Update Discord + re-inject BetterDiscord** | When you *do* want the newest Discord: downloads and installs it, re-locks the updater, and re-injects BetterDiscord automatically (installs the [BetterDiscord CLI](https://github.com/BetterDiscord/cli) for you if it's missing). |
+| **3. Install/Update Discord + BetterDiscord** | Gets you fully up to date: downloads and installs the latest Discord (whether it's already installed or not), re-locks the updater, and installs/re-injects BetterDiscord (downloading its own files too if they're not on the machine yet, and installing the [BetterDiscord CLI](https://github.com/BetterDiscord/cli) for you if that's missing). Cleans up its own temp files afterward. Safe to run repeatedly — it always clears out any existing BetterDiscord injection first so a previous partial/broken state can't linger. |
 | **4. Choose a different channel** | Switch between Stable, PTB, and Canary. Stable is used by default. |
 
 ## How it works
@@ -61,7 +65,7 @@ Everything the `.bat` does is plain PowerShell in `scripts/`, callable on its ow
 |---|---|
 | `scripts/Disable-DiscordUpdater.ps1` | Locks Discord (the permanent fix). |
 | `scripts/Enable-DiscordUpdater.ps1` | Unlocks Discord (restores normal auto-update). |
-| `scripts/Update-Discord.ps1` | Updates Discord and re-injects BetterDiscord in one step. |
+| `scripts/Update-Discord.ps1` | Installs/updates Discord and installs/re-injects BetterDiscord in one step, from any starting state. |
 | `scripts/Get-DiscordStatus.ps1` | Prints the current lock status for every installed channel. |
 
 All accept `-Channel Stable|PTB|Canary` (default `Stable`):
@@ -98,6 +102,13 @@ Quit Discord fully (system tray, not just the window) before running the lock/un
   delete it.
 - **SmartScreen blocks the `.bat`** — click **More info** → **Run anyway**. The scripts are plain
   text; open them in Notepad if you want to see exactly what they do before running.
+- **"Cannot find module '../betterdiscord.app.asar'" when Discord starts** — BetterDiscord was
+  left in a half-injected state (Discord's entry point was patched to load BetterDiscord's payload
+  file, but that file itself is missing or stale, usually because a previous update/injection got
+  interrupted). Run option 3 again — it always clears out any existing injection before
+  reinstalling, so this resolves itself. If you're running the scripts directly instead of the
+  `.bat`, the equivalent manual fix is `bdcli uninstall --channel stable` followed by
+  `bdcli install --channel stable` (swap `stable` for `ptb`/`canary` as needed).
 
 ## Notes
 

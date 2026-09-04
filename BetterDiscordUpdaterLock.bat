@@ -15,7 +15,7 @@ echo.
 echo ------------------------------------------------
 echo   1. Lock Discord     (stop it from erasing BetterDiscord)
 echo   2. Unlock Discord   (restore normal auto-update)
-echo   3. Update Discord + re-inject BetterDiscord
+echo   3. Install/Update Discord + BetterDiscord (works from scratch too)
 echo   4. Choose a different channel (Stable / PTB / Canary)
 echo   5. Exit
 echo ------------------------------------------------
@@ -70,8 +70,9 @@ goto pause_menu
 :update
 if not defined CHANNEL set "CHANNEL=Stable"
 echo.
-echo   Updating Discord (%CHANNEL%) and re-injecting BetterDiscord...
-echo   This downloads the official Discord installer and may take a minute.
+echo   Installing/updating Discord (%CHANNEL%) and BetterDiscord...
+echo   This works whether either one is already installed or not, and downloads
+echo   whatever's needed. May take a few minutes on a fresh machine.
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\Update-Discord.ps1" -Channel %CHANNEL%
 goto pause_menu
